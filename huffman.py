@@ -116,6 +116,16 @@ def flatten(root:BST , tree , alpha ):
         tree.append('1')
         alpha.append(root.char)
 
+def packing_lengths(lengths):
+    packed = bytearray()
+    for i in range(0,len(lengths) ,4) :
+        pack = lengths[i:i+4]
+        byte = 0
+        for j , size in enumerate(pack):
+            byte |= (size-1)<<(j*2)
+        packed.append(byte)
+    return bytes(packed)
+
 
 def make_header(root):
     alphabet = []
@@ -133,12 +143,15 @@ def make_header(root):
     body += bytearray(
         int(treebit[i:i+8], 2) for i in range(0, len(treebit), 8)
     )
-
+    char_sizes = []
+    characters = bytearray()
     for ch in alphabet:
         encoded = ch.encode("utf-8")
-        body.append(len(encoded))
-        body += encoded
-
+        char_sizes.append(len(encoded))
+        characters += encoded
+    
+    body += packing_lengths(char_sizes)
+    body += characters
     header = bytearray()
     header += struct.pack(">I", len(body)) 
     header += body
@@ -178,22 +191,38 @@ def compress(IP: str, OP: str):
     with open(OP, "wb") as Output:
         Output.write(binary)
 
+def unpacking_lengths(sizes , count):
+    lengths = []
 
-def header_parser(header , header_size):
-    pointer = 0
-    alphabet_size = struct.unpack_from(">I" , header , pointer)[0]
-    pointer +=4
+    for byte in sizes:
+        for i in range(4):
+            if len(lengths) >= count:
+                return lengths
+            size = (byte >> (2*i)) & 3
+            lengths.append(size+1)
+    return lengths
     
+
+def header_parser(header, header_size):
+    pointer = 0
+    alphabet_size = struct.unpack_from(">I", header, pointer)[0]
+    pointer += 4
+
     tree_bitsize = 2 if alphabet_size == 1 else (2*alphabet_size-1)
     treepadding = (8 - (tree_bitsize % 8)) % 8
+    tree_start = pointer
     pointer += (treepadding + tree_bitsize)//8
-    ByteTree = header[4:pointer]
+    ByteTree = header[tree_start:pointer]
     bitTree = "".join(f"{b:08b}" for b in ByteTree)[:tree_bitsize]
 
+    packed_len_count = -(-alphabet_size // 4)  
+    length_bytes = header[pointer:pointer + packed_len_count]
+    lengths = unpacking_lengths(length_bytes, alphabet_size)
+    pointer += packed_len_count
+
     alphabet = []
-    for _ in range(alphabet_size):
-        char_len = header[pointer]
-        pointer +=1
+    for i in range(alphabet_size):
+        char_len = lengths[i]
         char = header[pointer:pointer+char_len].decode("utf-8")
         pointer += char_len
         alphabet.append(char)
